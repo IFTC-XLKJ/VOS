@@ -72,11 +72,12 @@ async function listenLinuxDirect(callback) {
 
 // Windows: PowerShell 读取控制台输入
 async function listenWindowsPowerShell(callback) {
+    // 简化脚本，确保兼容性
     const script = `
+$ErrorActionPreference = 'SilentlyContinue'
 while ($true) {
     try {
         $key = [System.Console]::ReadKey($true)
-        # 输出格式: Key:Modifiers
         Write-Output "$($key.Key):$($key.Modifiers)"
     } catch {
         break
@@ -84,56 +85,56 @@ while ($true) {
 }
 `;
     try {
-        const proc = tjs.spawn(['powershell', '-Command', script], {
+        // 启动 PowerShell
+        const proc = tjs.spawn(['powershell', '-NoProfile', '-Command', script], {
             stdio: ['pipe', 'pipe', 'pipe']
         });
 
-        // 使用 for await...of 遍历 stdout 流
-        // 注意：TxikiJS 的 proc.stdout 可能是一个 ReadableStream
-        const reader = proc.stdout.getReader ? proc.stdout.getReader() : null;
-
-        if (reader) {
-            // 如果使用 ReadableStreamDefaultReader
-            (async () => {
-                try {
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        if (value) {
-                            const text = new TextDecoder().decode(value).trim();
-                            if (text) {
-                                const parts = text.split(':');
-                                if (parts.length >= 1) {
-                                    callback({ key: parts[0], modifiers: parts[1] || '', os: 'win32' });
-                                }
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.error("Stream read error:", e);
-                } finally {
-                    reader.releaseLock();
-                }
-            })();
-        } else {
-            //  fallback: 尝试直接监听数据事件 (如果 txikijs 版本较旧)
-            proc.stdout.on('data', (chunk) => {
-                const text = new TextDecoder().decode(chunk).trim();
-                if (text) {
-                    const parts = text.split(':');
-                    if (parts.length >= 1) {
-                        callback({ key: parts[0], modifiers: parts[1] || '', os: 'win32' });
-                    }
-                }
-            });
-
-            proc.stdout.on('end', () => {
-                console.log("PowerShell process ended.");
-            });
+        // 检查 stdout 是否可用
+        if (!proc.stdout) {
+            console.error("PowerShell stdout is null. Process may have failed to start.");
+            // 尝试读取 stderr 以获取错误信息
+            if (proc.stderr) {
+                proc.stderr.on('data', (chunk) => {
+                    console.error("PowerShell stderr:", new TextDecoder().decode(chunk));
+                });
+            }
+            return;
         }
 
-        // 等待进程结束（可选，通常我们希望它一直运行）
-        // await proc.wait(); 
+        console.log("PowerShell process started. Focus the terminal window to capture keys.");
+
+        // 监听标准输出
+        // TxikiJS 通常支持 Node.js 风格的事件监听
+        proc.stdout.on('data', (chunk) => {
+            try {
+                const text = new TextDecoder().decode(chunk).trim();
+                if (text) {
+                    // 可能有多行数据
+                    const lines = text.split('\n');
+                    lines.forEach(line => {
+                        if (line) {
+                            const parts = line.split(':');
+                            if (parts.length >= 1) {
+                                callback({ key: parts[0], modifiers: parts[1] || '', os: 'win32' });
+                            }
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error("Error processing key data:", e);
+            }
+        });
+
+        // 监听进程退出
+        proc.on('exit', (code) => {
+            console.log(`PowerShell process exited with code ${code}`);
+        });
+
+        // 监听错误
+        proc.on('error', (err) => {
+            console.error("PowerShell process error:", err);
+        });
 
     } catch (e) {
         console.error("Windows listener error:", e);
