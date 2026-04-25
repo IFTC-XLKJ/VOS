@@ -3,36 +3,44 @@ console.log("Starting VOS...");
 
 const PORT = 5432;
 
-// 获取系统信息
-const sysInfo = tjs.uname();
-const platform = sysInfo.sysname.toLowerCase(); // 'linux', 'windows nt', 'darwin' 等
+// 兼容不同版本的 TxikiJS 获取平台信息
+let platform = 'unknown';
+try {
+    if (typeof tjs.uname === 'function') {
+        const sysInfo = tjs.uname();
+        platform = sysInfo.sysname ? sysInfo.sysname.toLowerCase() : 'unknown';
+    } else if (typeof tjs.platform === 'string') {
+        platform = tjs.platform.toLowerCase();
+    } else if (typeof navigator !== 'undefined' && navigator.platform) {
+        platform = navigator.platform.toLowerCase();
+    }
+} catch (e) {
+    console.warn("Could not detect platform using standard methods:", e.message);
+}
+
+console.log(`Detected Platform: ${platform}`);
 
 function onKeyPress(event) {
-    console.log(`[Key Event] OS: ${event.os}, Code: ${event.code}, Value: ${event.value}`);
+    console.log(`[Key Event] OS: ${event.os}, Data:`, event);
 }
 
 async function startKeyboardListener() {
-    console.log(`Detected System: ${sysInfo.sysname}`);
-
     if (platform.includes('linux')) {
         console.log("Starting Linux direct input listener...");
         await listenLinuxDirect(onKeyPress);
-    } else if (platform.includes('windows')) {
+    } else if (platform.includes('win')) {
         console.log("Starting Windows PowerShell listener (Foreground only)...");
         await listenWindowsPowerShell(onKeyPress);
-    } else if (platform.includes('darwin')) {
-        console.log("macOS detected. Without Python/Swift tools, global key listening is not supported in pure TxikiJS.");
-        console.log("Recommendation: Use a web browser frontend to capture keys and send to this server.");
+    } else if (platform.includes('darwin') || platform.includes('mac')) {
+        console.log("macOS detected. Global key listening not supported in pure TxikiJS without external tools.");
     } else {
-        console.warn(`Unsupported platform: ${sysInfo.sysname}`);
+        console.warn(`Unsupported platform: ${platform}. Keyboard listener disabled.`);
     }
 }
 
 // Linux: 直接读取二进制事件
 async function listenLinuxDirect(callback) {
     const fs = tjs.fs;
-    // 注意：实际项目中可能需要遍历 /dev/input/event* 来找到键盘设备
-    // 这里简化为假设 event0 是键盘。如果失败，请检查权限或设备号。
     const devicePath = '/dev/input/event0';
 
     try {
@@ -43,15 +51,10 @@ async function listenLinuxDirect(callback) {
 
         while (true) {
             const bytesRead = await fd.read(buffer);
+            if (bytesRead === 0) break; // EOF
             if (bytesRead !== 24) continue;
 
             const view = new DataView(buffer.buffer);
-            // struct input_event {
-            //     struct timeval time; // 16 bytes (tv_sec + tv_usec)
-            //     __u16 type;          // 2 bytes
-            //     __u16 code;          // 2 bytes
-            //     __s32 value;         // 4 bytes
-            // };
             const type = view.getInt16(16, true);
             const code = view.getInt16(18, true);
             const value = view.getInt32(20, true);
@@ -61,18 +64,19 @@ async function listenLinuxDirect(callback) {
                 callback({ code, value, os: 'linux' });
             }
         }
+        fd.close();
     } catch (e) {
         console.error("Linux listener error:", e.message);
-        console.error("Hint: You may need root privileges or 'input' group membership to read /dev/input/event*");
     }
 }
 
-// Windows: PowerShell 读取控制台输入 (仅当窗口激活时)
+// Windows: PowerShell 读取控制台输入
 async function listenWindowsPowerShell(callback) {
     const script = `
 while ($true) {
     try {
         $key = [System.Console]::ReadKey($true)
+        # 输出格式: Key:Modifiers
         Write-Output "$($key.Key):$($key.Modifiers)"
     } catch {
         break
@@ -84,10 +88,36 @@ while ($true) {
             stdio: ['pipe', 'pipe', 'pipe']
         });
 
-        (async () => {
-            while (true) {
-                const chunk = await proc.stdout.read();
-                if (!chunk || chunk.length === 0) break;
+        // 使用 for await...of 遍历 stdout 流
+        // 注意：TxikiJS 的 proc.stdout 可能是一个 ReadableStream
+        const reader = proc.stdout.getReader ? proc.stdout.getReader() : null;
+
+        if (reader) {
+            // 如果使用 ReadableStreamDefaultReader
+            (async () => {
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        if (value) {
+                            const text = new TextDecoder().decode(value).trim();
+                            if (text) {
+                                const parts = text.split(':');
+                                if (parts.length >= 1) {
+                                    callback({ key: parts[0], modifiers: parts[1] || '', os: 'win32' });
+                                }
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("Stream read error:", e);
+                } finally {
+                    reader.releaseLock();
+                }
+            })();
+        } else {
+            //  fallback: 尝试直接监听数据事件 (如果 txikijs 版本较旧)
+            proc.stdout.on('data', (chunk) => {
                 const text = new TextDecoder().decode(chunk).trim();
                 if (text) {
                     const parts = text.split(':');
@@ -95,8 +125,16 @@ while ($true) {
                         callback({ key: parts[0], modifiers: parts[1] || '', os: 'win32' });
                     }
                 }
-            }
-        })();
+            });
+
+            proc.stdout.on('end', () => {
+                console.log("PowerShell process ended.");
+            });
+        }
+
+        // 等待进程结束（可选，通常我们希望它一直运行）
+        // await proc.wait(); 
+
     } catch (e) {
         console.error("Windows listener error:", e);
     }
@@ -107,13 +145,12 @@ const server = tjs.serve({
     port: PORT
 });
 
-// 启动监听
 startKeyboardListener().catch(console.error);
 
 await new Promise(() => { });
 
 async function handle(req) {
-    return new Response("VOS Running. Check console for key events (if supported by OS).");
+    return new Response("VOS Running. Check console for key events.");
 }
 
 async function stop() {
