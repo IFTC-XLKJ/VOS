@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../index.js"],
+  "sourcesContent": ["// TxikiJS\r\nconsole.log(\"Starting VOS...\");"],
+  "mappings": "AACA,QAAQ,IAAI,iBAAiB",
+  "names": []
+}
