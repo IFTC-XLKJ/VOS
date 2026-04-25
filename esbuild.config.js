@@ -8,5 +8,6 @@ esbuild.build({
     platform: 'neutral',
     minify: true,
     charset: 'utf8',
-    sourcemap: true
+    sourcemap: true,
+    tsconfig: 'tsconfig.json',
 });

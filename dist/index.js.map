@@ -1,7 +1,7 @@
 {
   "version": 3,
   "sources": ["../index.js"],
-  "sourcesContent": ["// TxikiJS\r\nconsole.log(\"Starting VOS...\");"],
-  "mappings": "AACA,QAAQ,IAAI,iBAAiB",
-  "names": []
+  "sourcesContent": ["// TxikiJS\r\nconsole.log(\"Starting VOS...\");\r\n\r\nconst PORT = 5432;\r\n\r\nconst server = tjs.serve({\r\n    fetch: handle,\r\n    port: PORT\r\n});\r\n\r\nawait new Promise(() => { });\r\n\r\nasync function handle(req) {\r\n    return new Response(\"Hello World!\");\r\n}\r\n\r\nasync function stop() {\r\n    await server.close();\r\n    console.log(\"Stopped VOS.\");\r\n}"],
+  "mappings": "AACA,QAAQ,IAAI,iBAAiB,EAE7B,IAAMA,EAAO,KAEPC,EAAS,IAAI,MAAM,CACrB,MAAOC,EACP,KAAMF,CACV,CAAC,EAED,MAAM,IAAI,QAAQ,IAAM,CAAE,CAAC,EAE3B,eAAeE,EAAOC,EAAK,CACvB,OAAO,IAAI,SAAS,cAAc,CACtC",
+  "names": ["PORT", "server", "handle", "req"]
 }
