@@ -87,10 +87,10 @@ while ($true) {
     try {
         // 启动 PowerShell
         const proc = tjs.spawn(['powershell', '-NoProfile', '-Command', script], {
-            stdio: ['pipe', 'pipe', 'pipe']
+            stdout: "pipe",
+            stderr: "pipe"
         });
-
-        // 检查 stdout 是否可用
+        // console.log(proc);
         if (!proc.stdout) {
             console.error("PowerShell stdout is null. Process may have failed to start.");
             // 尝试读取 stderr 以获取错误信息
@@ -103,41 +103,62 @@ while ($true) {
         }
 
         console.log("PowerShell process started. Focus the terminal window to capture keys.");
-
-        // 监听标准输出
-        // TxikiJS 通常支持 Node.js 风格的事件监听
-        proc.stdout.on('data', (chunk) => {
-            try {
-                const text = new TextDecoder().decode(chunk).trim();
+        const reader = proc.stdout.getReader();
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value) {
+                const text = new TextDecoder().decode(value).trim();
+                // console.log(`[PowerShell Key Event] ${text}`);
                 if (text) {
                     // 可能有多行数据
                     const lines = text.split('\n');
                     lines.forEach(line => {
-                        if (line) {
-                            const parts = line.split(':');
-                            if (parts.length >= 1) {
-                                callback({ key: parts[0], modifiers: parts[1] || '', os: 'win32' });
-                            }
-                        }
-                    });
+                        // console.log(`[PowerShell Key Event] ${line}`);
+                        callback({ key: line.split(':')[0], modifiers: line.split(':')[1] || '', os: 'win32' });
+                    })
                 }
-            } catch (e) {
-                console.error("Error processing key data:", e);
             }
-        });
+        }
+        // 监听标准输出
+        // TxikiJS 通常支持 Node.js 风格的事件监听
+        // console.log(proc.stdout);
+        // proc.stdout.on('data', (chunk) => {
+        //     try {
+        //         const text = new TextDecoder().decode(chunk).trim();
+        //         console.log(`[PowerShell Key Event] ${text}`);
+        //         if (text) {
+        //             // 可能有多行数据
+        //             const lines = text.split('\n');
+        //             lines.forEach(line => {
+        //                 if (line) {
+        //                     const parts = line.split(':');
+        //                     if (parts.length >= 1) {
+        //                         callback({ key: parts[0], modifiers: parts[1] || '', os: 'win32' });
+        //                     }
+        //                 }
+        //             });
+        //         }
+        //     } catch (e) {
+        //         console.error("Error processing key data:", e);
+        //     }
+        // });
 
         // 监听进程退出
-        proc.on('exit', (code) => {
-            console.log(`PowerShell process exited with code ${code}`);
-        });
+        // proc.on('exit', (code) => {
+        //     console.log(`PowerShell process exited with code ${code}`);
+        // });
 
         // 监听错误
-        proc.on('error', (err) => {
-            console.error("PowerShell process error:", err);
-        });
+        // proc.on('error', (err) => {
+        //     console.error("PowerShell process error:", err);
+        // });
 
     } catch (e) {
         console.error("Windows listener error:", e);
+    } finally {
+        // 释放锁，防止内存泄漏
+        await reader.releaseLock();
     }
 }
 
